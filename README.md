@@ -1,3 +1,8 @@
+# За симулиране не Modbus Slave RTU устройства
+Проекта е от https://github.com/espressif/esp-idf/tree/v5.3.1/examples/protocols/modbus/serial/mb_slave  
+Преправен е да работи в безкраен цикъл.  
+За различни устройства ще се създават отделни Branch.
+
 | Supported Targets | ESP32 | ESP32-C2 | ESP32-C3 | ESP32-C6 | ESP32-H2 | ESP32-P4 | ESP32-S2 | ESP32-S3 |
 | ----------------- | ----- | -------- | -------- | -------- | -------- | -------- | -------- | -------- |
 

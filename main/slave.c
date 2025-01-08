@@ -173,7 +173,7 @@ void app_main(void)
 
     // The cycle below will be terminated when parameter holdingRegParams.dataChan0
     // incremented each access cycle reaches the CHAN_DATA_MAX_VAL value.
-    for(;holding_reg_params.holding_data0 < MB_CHAN_DATA_MAX_VAL;) {
+    while (1) {//for(;holding_reg_params.holding_data0 < MB_CHAN_DATA_MAX_VAL;) {
         // Check for read/write events of Modbus master for certain events
         (void)mbc_slave_check_event(MB_READ_WRITE_MASK);
         ESP_ERROR_CHECK_WITHOUT_ABORT(mbc_slave_get_param_info(&reg_info, MB_PAR_INFO_GET_TOUT));
@@ -193,7 +193,7 @@ void app_main(void)
                 portENTER_CRITICAL(&param_lock);
                 holding_reg_params.holding_data0 += MB_CHAN_DATA_OFFSET;
                 if (holding_reg_params.holding_data0 >= (MB_CHAN_DATA_MAX_VAL - MB_CHAN_DATA_OFFSET)) {
-                    coil_reg_params.coils_port1 = 0xFF;
+                    // coil_reg_params.coils_port1 = 0xFF;
                 }
                 portEXIT_CRITICAL(&param_lock);
             }
@@ -219,7 +219,7 @@ void app_main(void)
                             (unsigned)reg_info.type,
                             (uint32_t)reg_info.address,
                             (unsigned)reg_info.size);
-            if (coil_reg_params.coils_port1 == 0xFF) break;
+            // if (coil_reg_params.coils_port1 == 0xFF) break;
         }
     }
     // Destroy of Modbus controller on alarm
