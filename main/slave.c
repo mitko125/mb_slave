@@ -10,9 +10,25 @@
 #include <stdint.h>
 #include "esp_err.h"
 #include "mbcontroller.h"       // for mbcontroller defines and api
-#include "modbus_params.h"      // for modbus parameters structures
 #include "esp_log.h"            // for log_write
 #include "sdkconfig.h"
+
+
+#define MY_REGISTERS_SIZE (20 * 100 + 20 + 0x4000)  //за да покрива до P20.20 16 и 32 бита
+
+// преобразува номера на 16 битов параметър от DC ELL задвижване в адрес на modbus регистър
+#define PARAM16_NUM_TO_REG_ADDRESS(group, parametr) (group * 100 + parametr - 1)
+
+// This file defines structure of modbus parameters which reflect correspond modbus address space
+// for each modbus register type (coils, discreet inputs, holding registers, input registers)
+#pragma pack(push, 1)
+typedef struct
+{
+    uint16_t my_regs[MY_REGISTERS_SIZE];
+} holding_reg_params_t;
+#pragma pack(pop)
+
+holding_reg_params_t holding_reg_params = { 0 };
 
 #define MB_PORT_NUM     (CONFIG_MB_UART_PORT_NUM)   // Number of UART port used for Modbus connection
 #define MB_SLAVE_ADDR   (CONFIG_MB_SLAVE_ADDR)      // The address of device in Modbus network
@@ -23,23 +39,10 @@
 
 // Defines below are used to define register start address for each type of Modbus registers
 #define HOLD_OFFSET(field) ((uint16_t)(offsetof(holding_reg_params_t, field) >> 1))
-#define INPUT_OFFSET(field) ((uint16_t)(offsetof(input_reg_params_t, field) >> 1))
-#define MB_REG_DISCRETE_INPUT_START         (0x0000)
-#define MB_REG_COILS_START                  (0x0000)
-#define MB_REG_INPUT_START_AREA0            (INPUT_OFFSET(input_data0)) // register offset input area 0
-#define MB_REG_INPUT_START_AREA1            (INPUT_OFFSET(input_data4)) // register offset input area 1
-#define MB_REG_HOLDING_START_AREA0          (HOLD_OFFSET(holding_data0))
-#define MB_REG_HOLDING_START_AREA1          (HOLD_OFFSET(holding_data4))
 
 #define MB_PAR_INFO_GET_TOUT                (10) // Timeout for get parameter info
-#define MB_CHAN_DATA_MAX_VAL                (6)
-#define MB_CHAN_DATA_OFFSET                 (0.2f)
-#define MB_READ_MASK                        (MB_EVENT_INPUT_REG_RD \
-                                                | MB_EVENT_HOLDING_REG_RD \
-                                                | MB_EVENT_DISCRETE_RD \
-                                                | MB_EVENT_COILS_RD)
-#define MB_WRITE_MASK                       (MB_EVENT_HOLDING_REG_WR \
-                                                | MB_EVENT_COILS_WR)
+#define MB_READ_MASK                        (MB_EVENT_HOLDING_REG_RD)
+#define MB_WRITE_MASK                       (MB_EVENT_HOLDING_REG_WR)
 #define MB_READ_WRITE_MASK                  (MB_READ_MASK | MB_WRITE_MASK)
 
 static const char *TAG = "SLAVE_TEST";
@@ -50,37 +53,7 @@ static portMUX_TYPE param_lock = portMUX_INITIALIZER_UNLOCKED;
 static void setup_reg_data(void)
 {
     // Define initial state of parameters
-    discrete_reg_params.discrete_input0 = 1;
-    discrete_reg_params.discrete_input1 = 0;
-    discrete_reg_params.discrete_input2 = 1;
-    discrete_reg_params.discrete_input3 = 0;
-    discrete_reg_params.discrete_input4 = 1;
-    discrete_reg_params.discrete_input5 = 0;
-    discrete_reg_params.discrete_input6 = 1;
-    discrete_reg_params.discrete_input7 = 0;
-
-    holding_reg_params.holding_data0 = 1.34;
-    holding_reg_params.holding_data1 = 2.56;
-    holding_reg_params.holding_data2 = 3.78;
-    holding_reg_params.holding_data3 = 4.90;
-
-    holding_reg_params.holding_data4 = 5.67;
-    holding_reg_params.holding_data5 = 6.78;
-    holding_reg_params.holding_data6 = 7.79;
-    holding_reg_params.holding_data7 = 8.80;
-
-    coil_reg_params.coils_port0 = 0x55;
-    coil_reg_params.coils_port1 = 0xAA;
-
-    input_reg_params.input_data0 = 1.12;
-    input_reg_params.input_data1 = 2.34;
-    input_reg_params.input_data2 = 3.56;
-    input_reg_params.input_data3 = 4.78;
-
-    input_reg_params.input_data4 = 1.12;
-    input_reg_params.input_data5 = 2.34;
-    input_reg_params.input_data6 = 3.56;
-    input_reg_params.input_data7 = 4.78;
+    holding_reg_params.my_regs[PARAM16_NUM_TO_REG_ADDRESS(1, 14)] = 4998;   //P01.14 [Hz] Line frequency = 49.98Hz
 }
 
 // An example application of Modbus slave. It is based on freemodbus stack.
@@ -94,7 +67,8 @@ void app_main(void)
     mb_register_area_descriptor_t reg_area; // Modbus register area descriptor structure
 
     // Set UART log level
-    esp_log_level_set(TAG, ESP_LOG_INFO);
+    esp_log_level_set(TAG, ESP_LOG_DEBUG);
+    
     void* mbc_slave_handler = NULL;
 
     ESP_ERROR_CHECK(mbc_slave_init(MB_PORT_SERIAL_SLAVE, &mbc_slave_handler)); // Initialization of Modbus controller
@@ -118,41 +92,10 @@ void app_main(void)
     // by mbc_slave_set_descriptor() API call then Modbus stack
     // will send exception response for this register area.
     reg_area.type = MB_PARAM_HOLDING; // Set type of register area
-    reg_area.start_offset = MB_REG_HOLDING_START_AREA0; // Offset of register area in Modbus protocol
-    reg_area.address = (void*)&holding_reg_params.holding_data0; // Set pointer to storage instance
-    // Set the size of register storage instance = 150 holding registers
-    reg_area.size = (size_t)(HOLD_OFFSET(holding_data4) - HOLD_OFFSET(test_regs));
-    ESP_ERROR_CHECK(mbc_slave_set_descriptor(reg_area));
-    reg_area.type = MB_PARAM_HOLDING; // Set type of register area
-    reg_area.start_offset = MB_REG_HOLDING_START_AREA1; // Offset of register area in Modbus protocol
-    reg_area.address = (void*)&holding_reg_params.holding_data4; // Set pointer to storage instance
-    reg_area.size = sizeof(float) << 2; // Set the size of register storage instance
-    ESP_ERROR_CHECK(mbc_slave_set_descriptor(reg_area));
-
-    // Initialization of Input Registers area
-    reg_area.type = MB_PARAM_INPUT;
-    reg_area.start_offset = MB_REG_INPUT_START_AREA0;
-    reg_area.address = (void*)&input_reg_params.input_data0;
-    reg_area.size = sizeof(float) << 2;
-    ESP_ERROR_CHECK(mbc_slave_set_descriptor(reg_area));
-    reg_area.type = MB_PARAM_INPUT;
-    reg_area.start_offset = MB_REG_INPUT_START_AREA1;
-    reg_area.address = (void*)&input_reg_params.input_data4;
-    reg_area.size = sizeof(float) << 2;
-    ESP_ERROR_CHECK(mbc_slave_set_descriptor(reg_area));
-
-    // Initialization of Coils register area
-    reg_area.type = MB_PARAM_COIL;
-    reg_area.start_offset = MB_REG_COILS_START;
-    reg_area.address = (void*)&coil_reg_params;
-    reg_area.size = sizeof(coil_reg_params);
-    ESP_ERROR_CHECK(mbc_slave_set_descriptor(reg_area));
-
-    // Initialization of Discrete Inputs register area
-    reg_area.type = MB_PARAM_DISCRETE;
-    reg_area.start_offset = MB_REG_DISCRETE_INPUT_START;
-    reg_area.address = (void*)&discrete_reg_params;
-    reg_area.size = sizeof(discrete_reg_params);
+    reg_area.start_offset = HOLD_OFFSET(my_regs); // Offset of register area in Modbus protocol
+    reg_area.address = (void*)&holding_reg_params.my_regs; // Set pointer to storage instance
+    reg_area.size = (size_t)(MY_REGISTERS_SIZE << 1);
+    // ESP_LOGE(TAG, "start_offset = %u INST_ADDR:0x%" PRIx32 ", SIZE:%u", reg_area.start_offset, (uint32_t)reg_area.address, (unsigned)reg_area.size);
     ESP_ERROR_CHECK(mbc_slave_set_descriptor(reg_area));
 
     setup_reg_data(); // Set values into known state
@@ -171,9 +114,7 @@ void app_main(void)
     ESP_LOGI(TAG, "Modbus slave stack initialized.");
     ESP_LOGI(TAG, "Start modbus test...");
 
-    // The cycle below will be terminated when parameter holdingRegParams.dataChan0
-    // incremented each access cycle reaches the CHAN_DATA_MAX_VAL value.
-    while (1) {//for(;holding_reg_params.holding_data0 < MB_CHAN_DATA_MAX_VAL;) {
+    while (1) {
         // Check for read/write events of Modbus master for certain events
         (void)mbc_slave_check_event(MB_READ_WRITE_MASK);
         ESP_ERROR_CHECK_WITHOUT_ABORT(mbc_slave_get_param_info(&reg_info, MB_PAR_INFO_GET_TOUT));
@@ -181,45 +122,33 @@ void app_main(void)
         // Filter events and process them accordingly
         if(reg_info.type & (MB_EVENT_HOLDING_REG_WR | MB_EVENT_HOLDING_REG_RD)) {
             // Get parameter information from parameter queue
-            ESP_LOGI(TAG, "HOLDING %s (%" PRIu32 " us), ADDR:%u, TYPE:%u, INST_ADDR:0x%" PRIx32 ", SIZE:%u",
+            ESP_LOGD(TAG, "HOLDING %s (%" PRIu32 " us), ADDR:%u, TYPE:%u, INST_ADDR:0x%" PRIx32 ", SIZE:%u",
                             rw_str,
                             reg_info.time_stamp,
                             (unsigned)reg_info.mb_offset,
                             (unsigned)reg_info.type,
                             (uint32_t)reg_info.address,
                             (unsigned)reg_info.size);
-            if (reg_info.address == (uint8_t*)&holding_reg_params.holding_data0)
-            {
-                portENTER_CRITICAL(&param_lock);
-                holding_reg_params.holding_data0 += MB_CHAN_DATA_OFFSET;
-                if (holding_reg_params.holding_data0 >= (MB_CHAN_DATA_MAX_VAL - MB_CHAN_DATA_OFFSET)) {
-                    // coil_reg_params.coils_port1 = 0xFF;
+
+            uint16_t addres = reg_info.mb_offset;
+            for (int i = 0; i < reg_info.size; i++, addres++) {
+                if (addres < MY_REGISTERS_SIZE) {
+                    if (reg_info.type & MB_EVENT_HOLDING_REG_RD) {  // само при четене
+                        switch (addres) {
+                        case PARAM16_NUM_TO_REG_ADDRESS(1, 14) : //P01.14 [Hz] Line frequency ~ 50.00Hz
+                            portENTER_CRITICAL(&param_lock);    // не чи ни трябват
+                            if (holding_reg_params.my_regs[PARAM16_NUM_TO_REG_ADDRESS(1, 14)] < 5010)
+                                holding_reg_params.my_regs[PARAM16_NUM_TO_REG_ADDRESS(1, 14)] ++;
+                            else
+                                holding_reg_params.my_regs[PARAM16_NUM_TO_REG_ADDRESS(1, 14)] = 4990;
+                            portEXIT_CRITICAL(&param_lock);
+                            break;
+                        default:
+                            break;
+                        }
+                    }
                 }
-                portEXIT_CRITICAL(&param_lock);
             }
-        } else if (reg_info.type & MB_EVENT_INPUT_REG_RD) {
-            ESP_LOGI(TAG, "INPUT READ (%" PRIu32 " us), ADDR:%u, TYPE:%u, INST_ADDR:0x%" PRIx32 ", SIZE:%u",
-                            reg_info.time_stamp,
-                            (unsigned)reg_info.mb_offset,
-                            (unsigned)reg_info.type,
-                            (uint32_t)reg_info.address,
-                            (unsigned)reg_info.size);
-        } else if (reg_info.type & MB_EVENT_DISCRETE_RD) {
-            ESP_LOGI(TAG, "DISCRETE READ (%" PRIu32 " us): ADDR:%u, TYPE:%u, INST_ADDR:0x%" PRIx32 ", SIZE:%u",
-                            reg_info.time_stamp,
-                            (unsigned)reg_info.mb_offset,
-                            (unsigned)reg_info.type,
-                            (uint32_t)reg_info.address,
-                            (unsigned)reg_info.size);
-        } else if (reg_info.type & (MB_EVENT_COILS_RD | MB_EVENT_COILS_WR)) {
-            ESP_LOGI(TAG, "COILS %s (%" PRIu32 " us), ADDR:%u, TYPE:%u, INST_ADDR:0x%" PRIx32 ", SIZE:%u",
-                            rw_str,
-                            reg_info.time_stamp,
-                            (unsigned)reg_info.mb_offset,
-                            (unsigned)reg_info.type,
-                            (uint32_t)reg_info.address,
-                            (unsigned)reg_info.size);
-            // if (coil_reg_params.coils_port1 == 0xFF) break;
         }
     }
     // Destroy of Modbus controller on alarm
