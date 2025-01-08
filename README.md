@@ -1,4 +1,4 @@
-# За симулиране не Modbus Slave RTU устройства
+# За симулиране на Modbus Slave RTU устройства
 Проекта е от https://github.com/espressif/esp-idf/tree/v5.3.1/examples/protocols/modbus/serial/mb_slave  
 Преправен е да работи в безкраен цикъл.  
 За различни устройства ще се създават отделни Branch.
